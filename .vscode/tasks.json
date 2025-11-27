@@ -1,0 +1,38 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "SDL2",
+            "command": "C:\\Program Files\\CodeBlocks\\MinGW\\bin\\g++.exe",
+            "args": [
+                "-O3",
+                "-fopenmp",
+                "-g",
+                "*.cpp",
+                "utils\\*.cpp",
+                "-o",
+                "main",
+                "-ID:/libs/SDL2-2.0.9/x86_64-w64-mingw32/include/SDL2",
+                "-LD:/libs/SDL2-2.0.9/x86_64-w64-mingw32/lib",
+                "-Iutils",
+                "-lmingw32",
+                "-lSDL2main",
+                "-lSDL2",
+            ],
+            "options": {
+                "shell": {
+                    "executable": "cmd.exe",
+                    "args": ["/c"]
+                }
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
