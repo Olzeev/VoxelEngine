@@ -14,6 +14,8 @@
 #include <fstream>
 #include <SDL.h>
 #include <chrono>
+#include <math.h>
+#include <SDL_keycode.h>
 
 using LiteMath::float2;
 using LiteMath::float3;
@@ -24,11 +26,13 @@ using LiteMath::int4;
 using LiteMath::uint2;
 using LiteMath::uint3;
 using LiteMath::uint4;
+using LiteMath::max;
+using LiteMath::min;
 
 #define PI 3.14159265358979323846264338327950288
 
-static constexpr int SCREEN_WIDTH  = 640;
-static constexpr int SCREEN_HEIGHT = 480;
+int SCREEN_WIDTH  = 800;
+int SCREEN_HEIGHT = 600;
 
 float rad_to_deg(float rad) { return rad * 180.0f / PI; }
 
@@ -47,73 +51,148 @@ float scene_distance(float3 p)
   return LiteMath::length(q)-t.y;
 }
 
-void torus_sphere_tracing_demo(const Camera &camera, uint32_t *out_image, int W, int H)
+using LiteMath::float3, LiteMath::float2;
+
+float2 normalize_screen_offset(int x, int y, const int W, const int H) {
+    float dx = float(x - W / 2) / (W / 2);
+    float dy = float(H / 2 - y) / (H / 2);
+    return float2(dx, dy);
+}
+
+
+float3 screen_offset(float3 dir, int x, int y, const int W, const int H) {
+    float2 dv = normalize_screen_offset(x, y, W, H);
+
+    float2 offset = float2(
+        dv.x * tan(LiteMath::M_PI / 2 * 0.5f),
+        dv.y * tan(LiteMath::M_PI / 3 * 0.5f)
+    );
+
+    float3 world_up = float3(0, 1, 0);
+    float3 right = normalize(cross(world_up, dir));
+    float3 up = normalize(cross(dir, right));
+
+    float3 new_dir = dir + offset.x * right + offset.y * up;
+    return normalize(new_dir);
+}
+
+
+
+bool voxel_trace_dda(const float3& ro, const float3& rd, float max_t, int3& out_voxel, float3& out_normal)
 {
-  LiteMath::float4x4 view = LiteMath::lookAt(camera.pos, camera.target, camera.up);
-  LiteMath::float4x4 proj = LiteMath::perspectiveMatrix(rad_to_deg(camera.fov_rad), (float)W/(float)H, camera.z_near, camera.z_far);
-  LiteMath::float4x4 viewProjInv = LiteMath::inverse4x4(proj*view);
+    int3 voxel = int3(floor(ro.x), floor(ro.y), floor(ro.z));
+    int3 step;
+    float3 t_max, t_delta;
 
-  const float3 light_dir = normalize(float3(-1,-1,-1));
-
-  for (int y=0;y<H;y++)
-  {
-    for (int x=0;x<W;x++)
-    {
-      float4 point_NDC = float4(2.0f*((x+0.5f)/W)-1.0f, 2.0f*((y+0.5f)/H)-1.0f, 0, 1);
-      float4 point_W = viewProjInv*point_NDC;
-      float3 point = LiteMath::to_float3(point_W)/point_W.w;
-      float3 ray_pos = camera.pos;
-      float3 ray_dir = LiteMath::normalize(point - ray_pos);
-
-      float t = 0;
-      int iter = 0;
-      float d = scene_distance(ray_pos + t*ray_dir);
-      while (d > 1e-6f && iter < 1000 && d < 5)
-      {
-        t += d;
-        d = scene_distance(ray_pos + t*ray_dir);
-        iter++;
-      }
-
-      float3 color = float3(0,0,0);
-      if (d <= 1e-6f)
-      {
-        float3 p = ray_pos + t*ray_dir;
-        float dx = 0.001f;
-        float idx = 1.0f/dx;
-        float3 n = float3((scene_distance(p + float3(dx,0,0)) - d)*idx,
-                          (scene_distance(p + float3(0,dx,0)) - d)*idx,
-                          (scene_distance(p + float3(0,0,dx)) - d)*idx);
-        color = float3(0.7,0.3,0.1) * (0.25f + std::max(0.0f, dot(normalize(n), light_dir)));
-      }
-
-      out_image[y*W + x] = float3_to_RGBA8(color);
+    for (int i = 0; i < 3; i++) {
+        if (fabs(rd[i]) < 1e-6) {
+            step[i] = 0;
+            t_max[i] = 1e6f;
+            t_delta[i] = 1e6f;
+        } else {
+            step[i] = (rd[i] > 0) ? 1 : -1;
+            float next_boundary = (rd[i] > 0) ? (voxel[i] + 1) : voxel[i];
+            t_max[i] = (next_boundary - ro[i]) / rd[i];
+            t_delta[i] = fabs(1.0f / rd[i]);
+        }
     }
-  }
+    
+    float t = 0;
+    int3 prev_voxel = voxel;
+    
+    while (t < max_t) {
+        float terrain_height = sin(voxel.x * 0.1f) * 3.0f + cos(voxel.z * 0.1f) * 3.0f;
+        
+        if (voxel.y <= terrain_height && 
+            fabs(voxel.x) <= 50 && 
+            fabs(voxel.z) <= 50) {
+            
+            out_voxel = voxel;
+            
+
+            if (voxel.x != prev_voxel.x) {
+                out_normal = float3(-step.x, 0, 0);
+            } else if (voxel.y != prev_voxel.y) {
+                out_normal = float3(0, -step.y, 0);
+            } else {
+                out_normal = float3(0, 0, -step.z);
+            }
+            
+            return true;
+        }
+        
+        prev_voxel = voxel;
+
+        if (t_max.x < t_max.y && t_max.x < t_max.z) {
+            voxel.x += step.x;
+            t = t_max.x;
+            t_max.x += t_delta.x;
+        } else if (t_max.y < t_max.z) {
+            voxel.y += step.y;
+            t = t_max.y;
+            t_max.y += t_delta.y;
+        } else {
+            voxel.z += step.z;
+            t = t_max.z;
+            t_max.z += t_delta.z;
+        }
+    }
+    
+    return false;
+}
+
+void render(const Camera &camera, uint32_t *out_image, int W, int H)
+{
+    float3 light_source = normalize(float3(-1, 1.4, 0.2));
+    float ray_length = 100;
+    
+    #pragma omp parallel for collapse(2)
+    for (int y = 0; y < H; y++)
+    {
+        for (int x = 0; x < W; x++)
+        {
+            float3 cur_dir = screen_offset(camera.dir, x, y, W, H);
+            float3 color = float3(0.1f, 0.1f, 0.1f); // фон
+            float3 normal;
+            int3 hit_voxel;
+            if (voxel_trace_dda(camera.pos, cur_dir, ray_length, hit_voxel, normal)) {
+                float diffuse = std::max(0.0f, dot(light_source, normal));
+                float pattern = (fmod(hit_voxel.x + hit_voxel.z, 2.0f) == 0) ? 0.8f : 0.6f;
+                color = float3(diffuse * pattern);
+            }
+            
+            out_image[y*W + x] = float3_to_RGBA8(color);
+        }
+    }
 }
 
 void draw_frame_example(const Camera &camera, std::vector<uint32_t> &pixels)
 {
-  torus_sphere_tracing_demo(camera, pixels.data(), SCREEN_WIDTH, SCREEN_HEIGHT);
+  render(camera, pixels.data(), SCREEN_WIDTH, SCREEN_HEIGHT);
 }
+
+
 
 // You must include the command line parameters for your main function to be recognized by SDL
 int main(int argc, char **args)
 {
+
   // Pixel buffer (RGBA format)
   std::vector<uint32_t> pixels(SCREEN_WIDTH * SCREEN_HEIGHT, 0xFFFFFFFF); // Initialize with white pixels
-
+  
   // Initialize SDL. SDL_Init will return -1 if it fails.
   if (SDL_Init(SDL_INIT_EVERYTHING) < 0)
   {
     std::cerr << "Error initializing SDL: " << SDL_GetError() << std::endl;
     return 1;
   }
+  
 
   // Create our window
   SDL_Window *window = SDL_CreateWindow("SDF Viewer", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-                                        SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
+                                        SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_INPUT_GRABBED);
 
+  
   // Make sure creating the window succeeded
   if (!window)
   {
@@ -130,6 +209,7 @@ int main(int argc, char **args)
     SDL_Quit();
     return 1;
   }
+
 
   // Create a texture
   SDL_Texture *texture = SDL_CreateTexture(
@@ -152,20 +232,31 @@ int main(int argc, char **args)
   bool running = true;
 
   Camera camera;
-  camera.pos = float3(0, 0, 7);
-  camera.target = float3(0, 0, 0);
-  camera.up = float3(0, 1, 0);
+  camera.pos = float3(0, 0, 0);
 
   auto time = std::chrono::high_resolution_clock::now();
   auto prev_time = time;
   float time_from_start = 0;
   uint32_t frameNum = 0;
 
-  
+  SDL_ShowCursor(SDL_DISABLE);
+
+  const Uint8* keys = SDL_GetKeyboardState(NULL);
 
   // Main loop
   while (running)
   {
+    //update camera or scene
+    prev_time = time;
+    time = std::chrono::high_resolution_clock::now();
+
+    //get delta time in seconds
+    float dt = std::chrono::duration<float, std::milli>(time - prev_time).count() / 1000.0f;
+    time_from_start += dt;
+    frameNum++;
+
+    if (frameNum % 10 == 0)
+      printf("Render time: %f ms\n", 1000.0f*dt);
     // Process keyboard input
     while (SDL_PollEvent(&ev) != 0)
     {
@@ -187,24 +278,41 @@ int main(int argc, char **args)
           // etc
         }
         break;
+      
+      case SDL_MOUSEMOTION:
+        {
+            int dx = -ev.motion.xrel;
+            int dy = ev.motion.yrel;
+
+            camera.angle.x += dx * camera.sensitivity * dt;
+            camera.angle.y -= dy * camera.sensitivity * dt;
+
+            if(camera.angle.y > PI / 2.001) camera.angle.y = PI / 2.001;
+            if(camera.angle.y < -PI / 2.001) camera.angle.y = -PI / 2.001;
+
+            camera.dir.x = cos(camera.angle.y) * cos(camera.angle.x);
+            camera.dir.y = sin(camera.angle.y);
+            camera.dir.z = cos(camera.angle.y) * sin(camera.angle.x);
+            camera.dir = normalize(camera.dir);
+
+            SDL_WarpMouseInWindow(window, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+        }
+        break;
       }
     }
 
-    //update camera or scene
-    prev_time = time;
-    time = std::chrono::high_resolution_clock::now();
+    
 
-    //get delta time in seconds
-    float dt = std::chrono::duration<float, std::milli>(time - prev_time).count() / 1000.0f;
-    time_from_start += dt;
-    frameNum++;
+    
+    float3 forward = normalize(float3(camera.dir.x, 0, camera.dir.z));
+    float3 right = normalize(cross(forward, float3(0, 1, 0)));
 
-    if (frameNum % 10 == 0)
-      printf("Render time: %f ms\n", 1000.0f*dt);
-
-    // example - rotate camera around the origin in XZ plane at a constant speed, 1 revolution per 10 seconds
-    float rot_speed = PI * 2.0f / 10.0f;
-    camera.pos = 7.0f*float3(sin(time_from_start) * rot_speed, 0, cos(time_from_start) * rot_speed);
+    if (keys[SDL_SCANCODE_W]) camera.pos += camera.speed * forward * dt;
+    if (keys[SDL_SCANCODE_S]) camera.pos -= camera.speed * forward * dt;
+    if (keys[SDL_SCANCODE_D]) camera.pos -= camera.speed * right * dt;
+    if (keys[SDL_SCANCODE_A]) camera.pos += camera.speed * right * dt;
+    if (keys[SDL_SCANCODE_SPACE]) camera.pos += float3(0, camera.speed, 0) * dt;
+    if (keys[SDL_SCANCODE_LSHIFT]) camera.pos -= float3(0, camera.speed, 0) * dt;
 
     // Render the scene
     draw_frame_example(camera, pixels);

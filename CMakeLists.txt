@@ -7,8 +7,8 @@ project(SdfTask CXX)
 find_package(SDL2 REQUIRED)
 
 # Uncomment the following line to enable OpenMP
-# find_package(OpenMP REQUIRED)
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+find_package(OpenMP REQUIRED)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 # Include SDL2 headers
