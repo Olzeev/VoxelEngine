@@ -1,3 +1,5 @@
 main.exe
 SDL2.dll
 textures
+build
+render

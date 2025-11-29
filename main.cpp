@@ -5,6 +5,7 @@
 #include "utils/LiteMath.h"
 #include "utils/public_camera.h"
 #include "utils/public_image.h"
+#include "utils/blocks.h"
 
 #include <cstdio>
 #include <cstring>
@@ -33,6 +34,8 @@ using LiteMath::min;
 
 int SCREEN_WIDTH  = 800;
 int SCREEN_HEIGHT = 600;
+
+int texture_size = 16;
 
 float rad_to_deg(float rad) { return rad * 180.0f / PI; }
 
@@ -77,13 +80,13 @@ float3 screen_offset(float3 dir, int x, int y, const int W, const int H) {
 }
 
 
-
-bool voxel_trace_dda(const float3& ro, const float3& rd, float max_t, int3& out_voxel, float3& out_normal)
+int voxel_trace_dda(const float3& ro, const float3& rd, float max_t, int3& out_voxel, float3& out_normal, float3& out_hit_point)
 {
     int3 voxel = int3(floor(ro.x), floor(ro.y), floor(ro.z));
     int3 step;
     float3 t_max, t_delta;
 
+    // Инициализация DDA
     for (int i = 0; i < 3; i++) {
         if (fabs(rd[i]) < 1e-6) {
             step[i] = 0;
@@ -99,6 +102,7 @@ bool voxel_trace_dda(const float3& ro, const float3& rd, float max_t, int3& out_
     
     float t = 0;
     int3 prev_voxel = voxel;
+    float3 hit_point;
     
     while (t < max_t) {
         float terrain_height = sin(voxel.x * 0.1f) * 3.0f + cos(voxel.z * 0.1f) * 3.0f;
@@ -109,20 +113,31 @@ bool voxel_trace_dda(const float3& ro, const float3& rd, float max_t, int3& out_
             
             out_voxel = voxel;
             
-
+            // Вычисляем точку пересечения
+            hit_point = ro + rd * t;
+            
+            // Определяем нормаль
             if (voxel.x != prev_voxel.x) {
                 out_normal = float3(-step.x, 0, 0);
+                // Уточняем точку пересечения для X грани
+                hit_point.x = (step.x > 0) ? voxel.x : voxel.x + 1;
             } else if (voxel.y != prev_voxel.y) {
                 out_normal = float3(0, -step.y, 0);
+                // Уточняем точку пересечения для Y грани
+                hit_point.y = (step.y > 0) ? voxel.y : voxel.y + 1;
             } else {
                 out_normal = float3(0, 0, -step.z);
+                // Уточняем точку пересечения для Z грани
+                hit_point.z = (step.z > 0) ? voxel.z : voxel.z + 1;
             }
             
-            return true;
+            out_hit_point = hit_point;
+            return fabs(voxel.y - terrain_height) < 2 ? SNOW : COBBLESTONE;
         }
         
         prev_voxel = voxel;
 
+        // Шагаем к следующему вокселю
         if (t_max.x < t_max.y && t_max.x < t_max.z) {
             voxel.x += step.x;
             t = t_max.x;
@@ -138,10 +153,10 @@ bool voxel_trace_dda(const float3& ro, const float3& rd, float max_t, int3& out_
         }
     }
     
-    return false;
+    return 0;
 }
 
-void render(const Camera &camera, uint32_t *out_image, int W, int H)
+void render(const Camera &camera, uint32_t *out_image, int W, int H, VoxelTexture *voxel_textures)
 {
     float3 light_source = normalize(float3(-1, 1.4, 0.2));
     float ray_length = 100;
@@ -155,20 +170,19 @@ void render(const Camera &camera, uint32_t *out_image, int W, int H)
             float3 color = float3(0.1f, 0.1f, 0.1f); // фон
             float3 normal;
             int3 hit_voxel;
-            if (voxel_trace_dda(camera.pos, cur_dir, ray_length, hit_voxel, normal)) {
+            float3 hit_point;
+            int id;
+            if (id = voxel_trace_dda(camera.pos, cur_dir, ray_length, hit_voxel, normal, hit_point)) {
                 float diffuse = std::max(0.0f, dot(light_source, normal));
-                float pattern = (fmod(hit_voxel.x + hit_voxel.z, 2.0f) == 0) ? 0.8f : 0.6f;
-                color = float3(diffuse * pattern);
+                //float pattern = (fmod(hit_voxel.x + hit_voxel.z, 2.0f) == 0) ? 0.8f : 0.6f;
+                float3 local = hit_point - float3(hit_voxel.x, hit_voxel.y, hit_voxel.z);
+                
+                color = voxel_textures[id - 1].get_color(local, normal) * (diffuse + sin(hit_point.x / 10.0f) * 0.1f + sin(hit_point.y / 10.0f) * 0.1f);
             }
             
             out_image[y*W + x] = float3_to_RGBA8(color);
         }
     }
-}
-
-void draw_frame_example(const Camera &camera, std::vector<uint32_t> &pixels)
-{
-  render(camera, pixels.data(), SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
 
@@ -239,10 +253,19 @@ int main(int argc, char **args)
   float time_from_start = 0;
   uint32_t frameNum = 0;
 
-  SDL_ShowCursor(SDL_DISABLE);
+  //SDL_ShowCursor(SDL_DISABLE);
 
   const Uint8* keys = SDL_GetKeyboardState(NULL);
 
+
+
+  VoxelTexture voxel_textures[8];
+  for (int i = 0; i < 8; ++i) {
+    std::cout << "awf\n";
+    voxel_textures[i].generate_texture(i);
+    
+  }
+  
   // Main loop
   while (running)
   {
@@ -315,7 +338,7 @@ int main(int argc, char **args)
     if (keys[SDL_SCANCODE_LSHIFT]) camera.pos -= float3(0, camera.speed, 0) * dt;
 
     // Render the scene
-    draw_frame_example(camera, pixels);
+    render(camera, pixels.data(), SCREEN_WIDTH, SCREEN_HEIGHT, voxel_textures);
 
     // Update the texture with the pixel buffer
     SDL_UpdateTexture(texture, nullptr, pixels.data(), SCREEN_WIDTH * sizeof(uint32_t));
