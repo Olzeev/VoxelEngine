@@ -17,6 +17,9 @@
 #include <chrono>
 #include <math.h>
 #include <SDL_keycode.h>
+#include <bitset>
+
+#include "utils/voxel_octree.h"
 
 using LiteMath::float2;
 using LiteMath::float3;
@@ -186,7 +189,13 @@ void render(const Camera &camera, uint32_t *out_image, int W, int H, VoxelTextur
 }
 
 
-
+void printBinary(int num) {
+    for (int i = 31; i >= 0; i--) {
+        std::cout << ((num >> i) & 1);
+        if (i % 8 == 0) std::cout << " "; // разделитель для байтов
+    }
+    std::cout << std::endl;
+}
 // You must include the command line parameters for your main function to be recognized by SDL
 int main(int argc, char **args)
 {
@@ -257,13 +266,12 @@ int main(int argc, char **args)
 
   const Uint8* keys = SDL_GetKeyboardState(NULL);
 
-
-
+  build_SO(256);
+  std::cout << world_octree_len << '\n';
+  std::cout << "aowifj\n";
   VoxelTexture voxel_textures[8];
   for (int i = 0; i < 8; ++i) {
-    std::cout << "awf\n";
     voxel_textures[i].generate_texture(i);
-    
   }
   
   // Main loop

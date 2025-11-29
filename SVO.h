@@ -12,30 +12,6 @@ static constexpr uint32_t IS_FAR_BIT = 0x8000;
 #define CHILD_POINTER_MASK 0xFFFE0000
 #define IS_FAR_MASK 0x00010000
 
-enum class BlockType
-{
-  Air,
-  Stone,
-  Grass,
-  Dirt,
-  Cobblestone,
-  Planks,
-  Sapling,
-  Bedrock,
-  Water,
-  WaterFlow,
-  Lava,
-  LavaFlow,
-  Sand,
-  Gravel,
-  OreGold,
-  OreIron,
-  OreCoal,
-  Wood,
-  Leaves,
-  Snow = 78
-};
-
 struct AABB {
   float3 pos;
   float3 size;

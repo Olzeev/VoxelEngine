@@ -49,7 +49,6 @@ struct VoxelTexture {
         for (int i = 0; i < 6; ++i) {
             std::string path = path_to_texture[id1] + std::to_string(texture_mask[id1][i]);
             path += ".png";
-            std::cout << path << '\n';
             read_image_rgb(path, textures[i], TEXTURE_SIZE, TEXTURE_SIZE);
         }
     }
