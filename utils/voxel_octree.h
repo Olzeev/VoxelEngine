@@ -104,6 +104,7 @@ int build_real_octree(OctreeNode *dummy_node, int cur_offset) { // <- believe th
         if (dummy_node->children[i] != NULL) {
             unsigned int offset = build_real_octree(dummy_node->children[i], old_octree_len - new_len + ind);
             if (offset >= 32768) { // 2^15
+                std::cout << "awfoiawf\n";
                 world_octree[old_octree_len - new_len + ind] |= FAR_MASK;
                 world_octree[old_octree_len - new_len + ind] |= (octree_far_len << 17);
                 octree_far.push_back(offset);
