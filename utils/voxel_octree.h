@@ -9,10 +9,21 @@ unsigned int FAR_MASK = 0x00010000;
 unsigned int VALID_MASK = 0x0000ff00;
 unsigned int LEAF_MASK = 0x000000ff;
 
-int world_octree_len = 0;
-std::vector <unsigned int> world_octree;
-int octree_far_len = 0;
-std::vector <unsigned int> octree_far;
+int CHUNK_SIZE = 128;
+
+struct SparseOctree {
+    int len = 0;
+    std::vector <unsigned int> nodes;
+    int far_len = 0;
+    std::vector <unsigned int> far;
+};
+
+struct TLNode {
+    TLNode *children[8];
+    SparseOctree *tree;
+};
+
+
 
 int3 node_offset[8] = {
     int3(0, 0, 0), 
@@ -25,16 +36,13 @@ int3 node_offset[8] = {
     int3(1, 1, 1),
 };
 
-char next_node_table[8][3] = {
-    {4, 2, 1}, 
-    {5, 3, -1}, 
-    {6, -1, 3}, 
-    {7, -1, -1}, 
-    {-1, 6, 5}, 
-    {-1, 7, -1}, 
-    {-1, -1, 7}, 
-    {-1, -1, -1}
-};
+int3 tlnode_offset[4] = {
+    int2(0, 0, 0), 
+    int2(0, 0, 1), 
+    int2(1, 0, 0), 
+    int2(1, 0, 1)
+}
+
 
 int check_block(int3 cur_pos) {
     if (cur_pos.x * cur_pos.x  + (cur_pos.y + 50) * (cur_pos.y + 50) + cur_pos.z * cur_pos.z <= 2500) {
@@ -43,11 +51,6 @@ int check_block(int3 cur_pos) {
     return 0;
 }
 
-struct SparseOctree {
-    int general_size;
-    int len = 0;
-    std::vector <int> nodes;
-};
 
 struct OctreeNode {
     OctreeNode *children[8];
@@ -81,7 +84,7 @@ OctreeNode * build_dummy_octree(int cur_size, int3 cur_pos) {
 }
 
 
-int build_real_octree(OctreeNode *dummy_node, int cur_offset) { // <- believe that dummy_node is alreay built and is in wrold_octree
+int build_real_octree(SparseOctree *tree, OctreeNode *dummy_node, int cur_offset) { // <- believe that dummy_node is alreay built and is in wrold_octree
     if (dummy_node->block_id != -1) {
         return 0;
     }
@@ -89,7 +92,7 @@ int build_real_octree(OctreeNode *dummy_node, int cur_offset) { // <- believe th
     for (int i = 0; i < 8; ++i) {
         if (dummy_node->children[i] != NULL) {
             if (dummy_node->children[i]->block_id != -1) {
-                world_octree.push_back(dummy_node->children[i]->block_id);
+                tree->nodes.push_back(dummy_node->children[i]->block_id);
                 new_len++;
             } else {
                 unsigned int new_node = 0;
@@ -103,24 +106,24 @@ int build_real_octree(OctreeNode *dummy_node, int cur_offset) { // <- believe th
                     }
                     
                 }
-                world_octree.push_back(new_node);
+                tree->nodes.push_back(new_node);
                 new_len++;
             }
         }
     }
     int ind = 0;
-    world_octree_len += new_len;
-    int old_octree_len = world_octree_len;
+    tree->len += new_len;
+    int old_octree_len = tree->len;
     for (int i = 0; i < 8; ++i) {
         if (dummy_node->children[i] != NULL) {
-            unsigned int offset = build_real_octree(dummy_node->children[i], old_octree_len - new_len + ind);
+            unsigned int offset = build_real_octree(tree, dummy_node->children[i], old_octree_len - new_len + ind);
             if (offset >= 32768) { // 2^15
-                world_octree[old_octree_len - new_len + ind] |= FAR_MASK;
-                world_octree[old_octree_len - new_len + ind] |= (octree_far_len << 17);
-                octree_far.push_back(offset);
-                octree_far_len++;
+                tree->nodes[old_octree_len - new_len + ind] |= FAR_MASK;
+                tree->nodes[old_octree_len - new_len + ind] |= (octree_far_len << 17);
+                tree->far.push_back(offset);
+                tree->far_len++;
             } else {
-                world_octree[old_octree_len - new_len + ind] |= (offset << 17);
+                tree->nodes[old_octree_len - new_len + ind] |= (offset << 17);
             }
             ind++;
         }       
@@ -148,11 +151,11 @@ void print_dummy_octree(OctreeNode *cur_node) {
     std::cout << "--------+--------\n";
 }
 
-void build_SO(int world_size) {
-    OctreeNode *dummy_root = build_dummy_octree(world_size, int3(-world_size / 2, -world_size / 2, -world_size / 2));
+void build_SO(SparseOctree *tree, int3 cur_pos) {
+    OctreeNode *dummy_root = build_dummy_octree(CHUNK_SIZE, cur_pos);
     if (dummy_root->block_id != -1) {
-        world_octree.push_back(dummy_root->block_id);
-        world_octree_len = 1;
+        tree->nodes.push_back(dummy_root->block_id);
+        tree->len = 1;
         return;
     }
     unsigned int cur_node = (1 << 17);
@@ -165,9 +168,9 @@ void build_SO(int world_size) {
         }
     }
 
-    world_octree.push_back(cur_node);
-    world_octree_len = 1;
-    build_real_octree(dummy_root, 0);
+    tree->nodes.push_back(cur_node);
+    tree->len = 1;
+    build_real_octree(tree, dummy_root, 0);
     free_dummy_octree(dummy_root);
 }
 
@@ -233,4 +236,76 @@ int traverse_octree(float3 ray_origin, float3 ray_dir, int cur_ind, int cur_size
         return -1;
     }
     return -1;
+}
+
+
+void build_tlSO(TLNode *cur, int3 cur_pos, int3 size_chunks) {
+    if (size_chunks.x == 1 && size_chunks.y == 1) {
+        cur->tree = new SparseOctree;
+        build_SO(cur->tree, cur_pos);
+        return;
+    } else if (size_chunks.y == 1) {
+        int new_size = size_chunks;
+        new_size.x /= 2;
+        new_size.z /= 2;
+        for (int i = 0; i < 4; ++i) {
+            build_tlSO(cur->children[i], cur_pos + tlnode_offset[i] * new_size * CHUNK_SIZE);
+        }
+        return;
+    }
+    for (int i = 0; i < 8; ++i) {
+        int new_size = size_chunks / 2;
+        for (int i = 0; i < 8; ++i) {
+            build_tlSO(cur->children[i], cur_pos + node_offset[i] * new_size * CHUNK_SIZE);
+        }
+        return;
+    }
+}
+
+int tlSO_traverse(TLNode *node, float3 ray_origin, float3 ray_dir, int3 cur_size, int3 cur_pos, 
+    float &dist, int3 &voxel_pos, int &voxel_size) {
+
+    if (node->tree != NULL) {
+        return traverse_octree(ray_origin, ray_dir, 0, CHUNK_SIZE, cur_pos, dist, voxel_pos, voxel_size);
+    } 
+    bool flag = false;
+    int min_id;
+    if (cur_size.y == 1) {
+        int3 new_size = int3(cur_size.x / 2, cur_size.y, cur_size.z / 2);
+        for (int i = 0; i < 4; ++i) {
+            float cur_dist;
+            int3 cur_voxel_pos;
+            int cur_voxel_size;
+            int cur_id = tlSO_traverse(node->children[i], ray_origin, ray_dir, 
+                new_size, cur_pos + new_size * tlnode_offset[i], 
+                cur_dist, cur_voxel_pos, cur_voxel_size);
+            if (cur_id != -1 && cur_id != 0) {
+                if (!flag || cur_dist < dist) {
+                    dist = cur_dist;
+                    voxel_pos = cur_voxel_pos;
+                    voxel_size = cur_voxel_Size;
+                    min_id = cur_id;
+                }
+            }
+        }
+    } else {
+        int3 new_size = cur_size / 2;
+        for (int i = 0; i < 8; ++i) {
+            float cur_dist;
+            int3 cur_voxel_pos;
+            int cur_voxel_size;
+            int cur_id = tlSO_traverse(node->children[i], ray_origin, ray_dir, 
+                new_size, cur_pos + new_size * tlnode_offset[i], 
+                cur_dist, cur_voxel_pos, cur_voxel_size);
+            if (cur_id != -1 && cur_id != 0) {
+                if (!flag || cur_dist < dist) {
+                    dist = cur_dist;
+                    voxel_pos = cur_voxel_pos;
+                    voxel_size = cur_voxel_Size;
+                    min_id = cur_id;
+                }
+            }
+        }
+    }
+    
 }

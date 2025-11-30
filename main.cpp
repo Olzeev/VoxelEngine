@@ -38,8 +38,6 @@ using LiteMath::min;
 int SCREEN_WIDTH  = 800;
 int SCREEN_HEIGHT = 600;
 
-int WORLD_SIZE = 256;
-
 int texture_size = 16;
 
 float rad_to_deg(float rad) { return rad * 180.0f / PI; }
