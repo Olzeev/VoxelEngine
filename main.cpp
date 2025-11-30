@@ -38,6 +38,8 @@ using LiteMath::min;
 int SCREEN_WIDTH  = 800;
 int SCREEN_HEIGHT = 600;
 
+int WORLD_SIZE = 256;
+
 int texture_size = 16;
 
 float rad_to_deg(float rad) { return rad * 180.0f / PI; }
@@ -172,33 +174,62 @@ void render(const Camera &camera, uint32_t *out_image, int W, int H, VoxelTextur
             float3 cur_dir = screen_offset(camera.dir, x, y, W, H);
             float3 color = float3(0.1f, 0.1f, 0.1f); // фон
             float3 normal;
-            int3 hit_voxel;
-            float3 hit_point;
-            int id;
-            if (id = voxel_trace_dda(camera.pos, cur_dir, ray_length, hit_voxel, normal, hit_point)) {
-                float diffuse = std::max(0.0f, dot(light_source, normal));
-                //float pattern = (fmod(hit_voxel.x + hit_voxel.z, 2.0f) == 0) ? 0.8f : 0.6f;
-                float3 local = hit_point - float3(hit_voxel.x, hit_voxel.y, hit_voxel.z);
-                
-                color = voxel_textures[id - 1].get_color(local, normal) * (diffuse + sin(hit_point.x / 10.0f) * 0.1f + sin(hit_point.y / 10.0f) * 0.1f);
-            }
+            int3 voxel_pos;
+            int voxel_size;
             
+            int id;
+            float dist;
+
+            int3 world_pos = int3(-WORLD_SIZE / 2);
+            if ((id = traverse_octree(camera.pos, cur_dir, 0, WORLD_SIZE, world_pos, dist, voxel_pos, voxel_size)) >= 1) {
+                float3 hit_point = camera.pos + cur_dir * dist;
+                float3 local = hit_point - float3(voxel_pos);
+                
+                // Определяем, какая грань ближе всего к точке пересечения
+                float3 to_center = local - float3(voxel_size) * 0.5f; // вектор к центру вокселя
+                float3 abs_to_center = LiteMath::abs(to_center);
+                
+                // Находим грань с максимальным отклонением от центра
+                if (abs_to_center.x >= abs_to_center.y && abs_to_center.x >= abs_to_center.z) {
+                    normal = float3(LiteMath::sign(to_center.x), 0, 0);
+                } else if (abs_to_center.y >= abs_to_center.z) {
+                    normal = float3(0, LiteMath::sign(to_center.y), 0);
+                } else {
+                    normal = float3(0, 0, LiteMath::sign(to_center.z));
+                }
+                
+                color = voxel_textures[id - 1].get_color(local, normal);
+                //color = float3(1);
+            }
             out_image[y*W + x] = float3_to_RGBA8(color);
         }
     }
 }
 
 
-void printBinary(int num) {
+void printBinary(int num, FILE *out) {
     for (int i = 31; i >= 0; i--) {
-        std::cout << ((num >> i) & 1);
-        if (i % 8 == 0) std::cout << " "; // разделитель для байтов
+        fprintf(out, "%d", ((num >> i) & 1));
+        if (i % 8 == 0) fprintf(out, " "); // разделитель для байтов
     }
-    std::cout << std::endl;
+    fprintf(out, "\n");
 }
 // You must include the command line parameters for your main function to be recognized by SDL
 int main(int argc, char **args)
 {
+
+  std::cout << "Building octree with world size " << WORLD_SIZE << "...\n";
+
+  build_SO(WORLD_SIZE);
+
+  std::cout << "Built octree with length " << world_octree_len << '\n';
+  FILE *out = fopen("out.txt", "w");
+  for (int i = 0; i < world_octree_len; ++i) {
+    printBinary(world_octree[i], out);
+  }
+  fclose(out);
+  std::cout << octree_far[0] << '\n';
+  
 
   // Pixel buffer (RGBA format)
   std::vector<uint32_t> pixels(SCREEN_WIDTH * SCREEN_HEIGHT, 0xFFFFFFFF); // Initialize with white pixels
@@ -266,9 +297,8 @@ int main(int argc, char **args)
 
   const Uint8* keys = SDL_GetKeyboardState(NULL);
 
-  build_SO(256);
-  std::cout << world_octree_len << '\n';
-  std::cout << "aowifj\n";
+  
+
   VoxelTexture voxel_textures[8];
   for (int i = 0; i < 8; ++i) {
     voxel_textures[i].generate_texture(i);
@@ -344,7 +374,7 @@ int main(int argc, char **args)
     if (keys[SDL_SCANCODE_A]) camera.pos += camera.speed * right * dt;
     if (keys[SDL_SCANCODE_SPACE]) camera.pos += float3(0, camera.speed, 0) * dt;
     if (keys[SDL_SCANCODE_LSHIFT]) camera.pos -= float3(0, camera.speed, 0) * dt;
-
+    std::cout << camera.pos.x << ' ' << camera.pos.y << ' ' << camera.pos.z << '\n';
     // Render the scene
     render(camera, pixels.data(), SCREEN_WIDTH, SCREEN_HEIGHT, voxel_textures);
 

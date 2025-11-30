@@ -53,22 +53,27 @@ struct VoxelTexture {
         }
     }
     float3 get_color(float3 local_coord, float3 normal) {
+        local_coord = LiteMath::abs(local_coord);
         int texture_x, texture_y;
         int ind = -1;
         if (normal.x != 0) {
             texture_y = floor(local_coord.y * TEXTURE_SIZE);
             texture_x = floor(local_coord.z * TEXTURE_SIZE);
-            ind = 0;
+            
+            ind = normal.x > 0 ? 0 : 1;
         } else if (normal.y != 0) {
             texture_y = floor(local_coord.x * TEXTURE_SIZE);
             texture_x = floor(local_coord.z * TEXTURE_SIZE);
-            ind = 4;
+            ind = normal.y > 0 ? 4 : 5;
         } else {
             texture_x = floor(local_coord.x * TEXTURE_SIZE);
             texture_y = floor(local_coord.y * TEXTURE_SIZE);
-            ind = 2;
+            ind = normal.z > 0 ? 2 : 3;
         }
-        texture_y = TEXTURE_SIZE - 1 - texture_y;
+        
+        texture_x %= TEXTURE_SIZE;
+        texture_y %= TEXTURE_SIZE;
+        texture_y = TEXTURE_SIZE - texture_y - 1;
         return float3(
             textures[ind][(texture_y * TEXTURE_SIZE + texture_x) * 3], 
             textures[ind][(texture_y * TEXTURE_SIZE + texture_x) * 3 + 1], 
